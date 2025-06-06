@@ -1,0 +1,7 @@
+<library path="lib/librm_digitalimg_proc_deep">
+    <class
+            name="rm_digitalimg_proc_deep/Processor"
+            type="rm_digitalimg_proc_deep::Processor"
+            base_class_type="nodelet::Nodelet">
+    </class>
+</library>

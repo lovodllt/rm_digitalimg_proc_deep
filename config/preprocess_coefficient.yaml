@@ -1,0 +1,21 @@
+target_color: 0
+preprocess_method: 0
+red_h_min_low: 0
+red_h_max_low: 35
+red_h_min_high: 156
+red_h_max_high: 180
+red_s_min: 43
+red_s_max: 255
+red_v_min: 155
+red_v_max: 255
+
+blue_h_min: 80
+blue_h_max: 120
+blue_s_min: 30
+blue_s_max: 255
+blue_v_min: 190
+blue_v_max: 255
+
+binary_thresh: 140
+morph_type: 3
+binary_element: 7

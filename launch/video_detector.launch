@@ -1,0 +1,29 @@
+<launch>
+    <arg name="manager_name" default="nodelet_manager" />
+    <node pkg="nodelet" type="nodelet" name="$(arg manager_name)" args="manager" output="screen" >
+        <param name="num_worker_threads" value="8" />
+    </node>
+
+     <node pkg="nodelet" type="nodelet" name="hk_camera"
+           args="load hk_camera/HKCameraNodelet $(arg manager_name)"
+           output="screen">
+         <param name="camera_name" value="hk_camera"/>
+         <param name="image_width" value="1440"/>
+         <param name="image_height" value="1080"/>
+         <param name="pixel_format" value="bgr8"/>
+         <param name="camera_info_url" value=""/>
+         <param name="camera_frame_id" value="camera_optical_frame"/>
+         <param name="camera_sn" value="00J67375789"/>
+         <param name="frame_rate" value="15"/>
+     </node>
+
+    <node pkg="nodelet" type="nodelet" name="processor"
+          args="load rm_digitalimg_proc_deep/Processor $(arg manager_name)" >
+        <rosparam file="$(find rm_digitalimg_proc_deep)/config/weibull_coefficient.yaml" command="load" />
+        <rosparam file="$(find rm_digitalimg_proc_deep)/config/armor_coefficient.yaml" command="load" />
+        <rosparam file="$(find rm_digitalimg_proc_deep)/config/preprocess_coefficient.yaml" command="load" />
+        <rosparam file="$(find rm_digitalimg_proc_deep)/config/inference.yaml" command="load" />
+        <remap from="/processor/result_msg" to="/processor/result_msg"/>
+    </node>
+
+</launch>

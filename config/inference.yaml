@@ -1,0 +1,3 @@
+score_threshold: 0.7
+nms_threshold: 0.3
+target_color: 1

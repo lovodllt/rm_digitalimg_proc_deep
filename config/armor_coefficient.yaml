@@ -1,0 +1,46 @@
+is_bar_debug: False
+is_armor_debug: False
+is_classfy_debug: False
+target_option: 0
+select_bar: 1
+max_angle: 55
+min_lw_ratio: 2.4
+max_lw_ratio: 17
+min_pixel_contained_ratio: 0.5
+max_bars_ratio: 1.6
+max_bars_distance: 3.1
+min_bars_distance: 0.45
+max_bars_angle: 12
+max_bars_y_dis: 0.6
+select_by_last: False
+large_armor_ratio: 3.2
+
+#warp
+bar_length_in_warp: 12.0
+warp_height: 28
+top_light_y: 7.0
+roi_width: 20
+roi_height: 28
+
+warp_thresh: 100
+gamma: True
+contrast_alpha: 15.0
+contrast_beta: -150
+gamma_y: 0.7
+rotate: False
+
+#expand_ratio: [ 0.63,0.55 ]   # [top,bottom]  banned
+#expand_ratio: [0, 0]
+
+id_confidence: 0.8
+input_shape: [ 28,20 ]  # [H,W] ??????
+use_id_cls: True
+is_large_armor_store: True
+min_id_white_ratio: 0.001
+max_id_white_ratio: 0.8
+
+image_x_center: 800
+image_y_center: 560
+
+model_path: "/config/model/mlp.onnx"
+
