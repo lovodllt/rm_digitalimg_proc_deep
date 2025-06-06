@@ -1,8 +1,6 @@
 #include "inference.h"
-
-#include <common.h>
-
 #include "number_classifier.h"
+
 static number_classifier num_classifier;
 
 void deepProcess::init()

@@ -14,10 +14,8 @@
 #include <Eigen/Dense>
 #include <rm_msgs/TrackData.h>
 #include <boost/bind.hpp>
-#include <opencv2/core/ocl.hpp>
 
 #include "inference.h"
-#include "common.h"
 #include "rm_digitalimg_proc_deep/InferenceConfig.h"
 
 namespace rm_digitalimg_proc_deep {

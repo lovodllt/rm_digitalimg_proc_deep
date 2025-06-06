@@ -4,9 +4,6 @@ namespace rm_digitalimg_proc_deep {
 
 void Processor::onInit()
 {
-    cv::ocl::setUseOpenCL(false);
-    ROS_WARN("Force disabled OpenCL acceleration");
-
     ros::NodeHandle &nh = getMTPrivateNodeHandle();
     static ros::CallbackQueue my_queue;
     nh.setCallbackQueue(&my_queue);
