@@ -1,4 +1,4 @@
-#include <inference.h>
+#include "inference.h"
 
 //#define number_classifier_model_path_ "/home/lovod/rm_code/src/rm_visplugin/rm_digitalimg_proc_deep/model/mlp_dx.onnx"
 #define number_classifier_model_path_ "/home/lovod/rm_code/src/rm_visplugin/rm_digitalimg_proc_deep/model/number_classifier.onnx"
@@ -11,7 +11,7 @@
 static const std::vector<std::string> class_names_ = {
     "1", "2", "3", "4", "5", "outpost", "guard", "base", "negative"};
 
-class number_classifier {
+class number_classifier{
 public:
     number_classifier()
     {
@@ -21,7 +21,7 @@ public:
     void init();
 
     void warp(finalArmor &armors);
-    cv::UMat extractNumbers(finalArmor &armors);
+    cv::Mat extractNumbers(finalArmor &armors);
     void classify(std::vector<finalArmor> &finalArmors);
 
 private:

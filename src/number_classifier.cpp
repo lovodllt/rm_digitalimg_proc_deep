@@ -1,4 +1,4 @@
-#include <number_classifier.h>
+#include "number_classifier.h"
 
 void number_classifier::init()
 {
@@ -15,34 +15,49 @@ void number_classifier::using_once()
 
 void number_classifier::warp(finalArmor &armor)
 {
-    std::vector<cv::Point2f> src_pts = armor.armor_points;
-    std::vector<cv::Point2f> dst_pts(4);
-
     const int top_light_y_ = (warp_height_ - light_len_) / 2;
     const int bottom_light_y_ = top_light_y_ + light_len_;
 
-    dst_pts[0] = cv::Point2f(0, top_light_y_);
-    dst_pts[1] = cv::Point2f(warp_width_ - 1, top_light_y_);
-    dst_pts[2] = cv::Point2f(warp_width_ - 1, bottom_light_y_);
-    dst_pts[3] = cv::Point2f(0, bottom_light_y_);
+    cv::Point2f src_pts[4] = {armor.armor_points[0], armor.armor_points[1], armor.armor_points[2], armor.armor_points[3]};
 
-    std::cout<<"src_pts:"<<src_pts<<std::endl;
-    std::cout<<"dst_pts:"<<dst_pts<<std::endl;
-    cv::Mat warp_mat = findHomography(src_pts, dst_pts, cv::RANSAC);
-    std::cout<<"warp_mat:"<<warp_mat<<std::endl;
-    warpPerspective(armor.num_roi, armor.num_roi, warp_mat, cv::Size(warp_width_, warp_height_));
+    cv::Point2f dst_pts[4] = {
+        cv::Point2f(0, bottom_light_y_),
+        cv::Point2f(0, top_light_y_),
+        cv::Point2f(warp_width_, top_light_y_),
+        cv::Point2f(warp_width_, bottom_light_y_),
+    };
+
+    std::cout << "Src Points: ";
+    for (auto& pt : src_pts) std::cout << pt << " ";
+    std::cout << "\nDst Points: ";
+    for (auto& pt : dst_pts) std::cout << pt << " ";
+    std::cout << std::endl;
+
+    auto warp_mat = getPerspectiveTransform(src_pts, dst_pts);
+    warp_mat.at<double>(0, 2) /= 1000.0;
+    warp_mat.at<double>(1, 2) /= 1000.0;
+    std::cout << "Warp Matrix: " << warp_mat << std::endl;
+
+    try
+    {
+        warpPerspective(armor.num_roi, armor.num_roi, warp_mat, cv::Size(warp_width_, warp_height_), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0));
+    }
+    catch (const cv::Exception &e)
+    {
+        ROS_ERROR("warp err occurred !");
+        ROS_ERROR("cv_exception: %s", e.what());
+    }
 }
 
 // 提取数字图像
-cv::UMat number_classifier::extractNumbers(finalArmor &armor)
+cv::Mat number_classifier::extractNumbers(finalArmor &armor)
 {
     //warp(armor);
-    imshow("warp", armor.num_roi);
-    cv::UMat number_img;
+    cv::Mat num_img;
 
     int roi_w = armor.num_roi.cols;
     int roi_h = armor.num_roi.rows;
-    int crop_x = static_cast<int>(roi_w * 0.25);
+    int crop_x = static_cast<int>(roi_w * 0.2);
     int crop_y = 0;
     int crop_w = static_cast<int>(roi_w * 0.5);
     int crop_h = roi_h;
@@ -51,14 +66,14 @@ cv::UMat number_classifier::extractNumbers(finalArmor &armor)
     crop_w = std::min(crop_w, roi_w - crop_x);
 
     cv::Rect roi(crop_x, crop_y, crop_w, crop_h);
-    cv::UMat crop_img = armor.num_roi(roi);
+    cv::Mat crop_img = armor.num_roi(roi);
 
-    resize(crop_img, number_img, cv::Size(roi_w_, roi_h_));
+    resize(crop_img, num_img, cv::Size(roi_w_, roi_h_));
 
     // 二值化处理
-    threshold(number_img, number_img, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+    threshold(num_img, num_img, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 
-    return number_img;
+    return num_img;
 }
 
 // 数字分类
@@ -68,16 +83,17 @@ void number_classifier::classify(std::vector<finalArmor> &finalArmors)
     for (auto it = finalArmors.begin(); it != finalArmors.end();)
     {
         auto &armor = *it;  // 通过迭代器访问当前元素
-
-        cv::UMat num_img = extractNumbers(armor);
-        imshow("number", num_img);
-
         cv::Mat num_mat, num_blob;
-        num_img.copyTo(num_mat);
 
-        // 归一化处理
-        num_mat = num_mat / 255.0;
+        num_mat = extractNumbers(armor);
 
+        if (num_mat.empty())
+        {
+            it = finalArmors.erase(it);
+            continue;
+        }
+
+        imshow("number", num_mat);
         cv::dnn::blobFromImage(num_mat, num_blob);
 
         net_.setInput(num_blob);
@@ -101,11 +117,12 @@ void number_classifier::classify(std::vector<finalArmor> &finalArmors)
         if (label != "negative")
         {
             armor.label = label;
-            ++it;  // 不删除时，迭代器后移
+            ++it;
         }
         else
         {
             it = finalArmors.erase(it);
+            std::cout<<"number wrong"<<std::endl;
         }
     }
 }

@@ -1,7 +1,4 @@
 #include "inference.h"
-#include "number_classifier.h"
-
-static number_classifier num_classifier;
 
 void deepProcess::init()
 {
@@ -21,6 +18,7 @@ void deepProcess::init()
     infer_request = compiled_model.create_infer_request();
     // 创建输入端口
     input_port = compiled_model.input();
+
 }
 
 // 确保初始化操作仅被执行一次
@@ -30,17 +28,15 @@ void deepProcess::using_once()
 }
 
 // 图像预处理
-dataImg deepProcess::preprocess_img(const cv::UMat& img)
+dataImg deepProcess::preprocess_img(cv::Mat &img)
 {
     // 0.自动提亮
-    cv::UMat hsv;
-    cvtColor(img, hsv, cv::COLOR_BGR2Lab);
+    cv::Mat lab;
+    cvtColor(img, lab, cv::COLOR_BGR2Lab);
     std::vector<cv::Mat> channels;
-    split(hsv, channels);
+    split(lab, channels);
 
     double l_mean = mean(channels[0])[0];
-    std::cout<<"l_mean: "<<l_mean<<std::endl;
-
     if (l_mean < 10)
     {
         double gamma = 0.7;
@@ -52,12 +48,9 @@ dataImg deepProcess::preprocess_img(const cv::UMat& img)
         LUT(channels[0], lut, channels[0]);
     }
 
-    cv::UMat bgr_img;
-    cv::merge(channels, hsv);
-    cvtColor(hsv, bgr_img, cv::COLOR_Lab2BGR);
-
-    hsv.release();
-    channels.clear();
+    cv::Mat bgr_img;
+    cv::merge(channels, lab);
+    cvtColor(lab, bgr_img, cv::COLOR_Lab2BGR);
 
     // 1.获取图像尺寸
     int h = bgr_img.rows;
@@ -72,10 +65,8 @@ dataImg deepProcess::preprocess_img(const cv::UMat& img)
     int new_h = static_cast<int>(h * scale);
 
     // 3.缩放图像
-    cv::UMat resized_img;
+    cv::Mat resized_img;
     resize(bgr_img, resized_img, cv::Size(new_w, new_h));
-
-    bgr_img.release();
 
     // 4.计算填充量
     int padW = tw - new_w;
@@ -87,11 +78,11 @@ dataImg deepProcess::preprocess_img(const cv::UMat& img)
     int bottom = padH - top;
 
     // 5.填充图像
-    cv::UMat padded_img;
+    cv::Mat padded_img;
     copyMakeBorder(resized_img, padded_img, top, bottom, left, right, cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0));
 
     // 6.创建blob
-    cv::Mat blob = cv::dnn::blobFromImage(padded_img, 1.0/255.0, cv::Size(target_size, target_size), cv::Scalar(0,0,0), true, CV_16F);
+    cv::Mat blob = cv::dnn::blobFromImage(padded_img, 1.0/255.0, cv::Size(target_size, target_size), cv::Scalar(0,0,0), true, CV_32F);
 
     // 7.返回结果
     dataImg data;
@@ -101,16 +92,16 @@ dataImg deepProcess::preprocess_img(const cv::UMat& img)
     data.pad_top = top;
     data.blob = blob;
 
-    bgr_img.release();
-    resized_img.release();
-    padded_img.release();
-
     return data;
 }
 
 // 模型推理(主函数)
 std::vector<finalArmor> deepProcess::InferAndPostprocess(dataImg &imgdata, float score_threshold_, float nms_threshold_, TargetColor target_color)
 {
+    // 0.清空容器
+    qualifiedArmors.clear();
+    finalArmors.clear();
+
     // 1.初始化模型
     using_once();
 
@@ -187,52 +178,80 @@ std::vector<finalArmor> deepProcess::InferAndPostprocess(dataImg &imgdata, float
     }
     barFiliter(qualifiedArmors);
     armorFiliter(qualifiedArmors, finalArmors);
-    num_classifier.classify(finalArmors);
 
     return finalArmors;
 }
 
 // 判断装甲板颜色
-void deepProcess::colorFiliter(cv::UMat& img, inferredArmor &right_armor, std::vector<inferredArmor> &qualifiedArmors, TargetColor target_color_)
+void deepProcess::colorFiliter(cv::Mat& img, inferredArmor &right_armor, std::vector<inferredArmor> &qualifiedArmors, TargetColor target_color_)
 {
     std::cout<<"target_color: "<<target_color_<<std::endl;
-    cv::UMat roi = img(right_armor.box);
+    cv::Mat roi = img(right_armor.box);
 
     // 存储单通道roi
-    cv::UMat num_img;
-    cvtColor(roi, num_img, cv::COLOR_BGR2GRAY);
-    right_armor.num_roi = num_img.clone();
+    cv::Mat num_img;
+    roi.copyTo(num_img);
+    cvtColor(num_img, num_img, cv::COLOR_BGR2GRAY);
+    right_armor.num_roi = num_img;
 
     // 转换hsv图像
-    cv::UMat hsv_img;
-    cvtColor(roi, hsv_img, cv::COLOR_BGR2HSV);
+    cv::Mat hsv_img;
+    roi.copyTo(hsv_img);
+    cvtColor(hsv_img, hsv_img, cv::COLOR_BGR2HSV);
 
-    cv::UMat binary_image_;
-    if(target_color_ == 1)
+    cv::Mat binary_image_;
+    if(target_color_ == TargetColor::BLUE)
     {
+        target_is_red_ = 0;
         inRange(hsv_img, cv::Scalar(blue_h_min_, blue_s_min_, blue_v_min_), cv::Scalar(blue_h_max_, blue_s_max_, blue_v_max_), binary_image_);
         int nonZeroCount = countNonZero(binary_image_);
         if(nonZeroCount > 30)
         {
-            right_armor.color = 1;
+            std::cout<<"color true"<<std::endl;
+            right_armor.color = 0;
             right_armor.hsv_roi = binary_image_.clone();
             qualifiedArmors.push_back(right_armor);
         }
+        else
+            std::cout<<"color false"<<std::endl;
     }
-    else if(target_color_ == 2)
+    else if(target_color_ == TargetColor::RED)
     {
-        cv::UMat h_binary_low, h_binary_high;
+        target_is_red_ = 1;
+        cv::Mat h_binary_low, h_binary_high;
         inRange(hsv_img, cv::Scalar(red_h_min_low_, red_s_min_, red_v_min_), cv::Scalar(red_h_max_low_, red_s_max_, red_v_max_), h_binary_low);
         inRange(hsv_img, cv::Scalar(red_h_min_high_, red_s_min_, red_v_min_), cv::Scalar(red_h_max_high_, red_s_max_, red_v_max_), h_binary_high);
         bitwise_or(h_binary_low, h_binary_high, binary_image_);
         int nonZeroCount = countNonZero(binary_image_);
         if(nonZeroCount > 30)
         {
-            right_armor.color = 2;
+            std::cout<<"color true"<<std::endl;
+            right_armor.color = 1;
             right_armor.hsv_roi = binary_image_.clone();
             qualifiedArmors.push_back(right_armor);
         }
+        else
+            std::cout<<"color false"<<std::endl;
     }
+}
+
+bool deepProcess::isValidBar(Bar &bar)
+{
+    std::cout<<"bar.ratio: "<<bar.ratio<<"    bar.angle: "<<bar.angle<<std::endl;
+
+    if (bar.ratio >= max_lw_ratio_ || bar.ratio <= min_lw_ratio_)
+        {
+        std::cout<<"bar.ratio false"<<std::endl;
+        return false;
+    }
+
+    if (abs(bar.angle) <= min_bar_angle_)
+    {
+        std::cout<<"bar.angle false"<<std::endl;
+        return false;
+    }
+
+    return true;
 }
 
 // 标准化灯条四点顺序
@@ -283,20 +302,283 @@ void standardizeBar(Bar &bar)
     bar.long_one = long_one;
 }
 
-bool deepProcess::isValidBar(Bar &bar)
+// 定位灯条准确位置
+void deepProcess::barFiliter(std::vector<inferredArmor> &qualifiedArmors)
 {
-    std::cout<<"bar.ratio: "<<bar.ratio<<"    bar.angle: "<<bar.angle<<std::endl;
+    // 遍历每个装甲板
+    for (auto &armor : qualifiedArmors)
+    {
+        cv::Mat roi = armor.hsv_roi;
+        std::vector<Bar> tmpbars;
 
-    if (bar.ratio >= max_lw_ratio_ || bar.ratio <= min_lw_ratio_)
-        return false;
+        cv::Mat close_kernel = getStructuringElement(cv::MORPH_RECT, cv::Size(3, 7));
+        morphologyEx(roi, morphology_img_, cv::MORPH_CLOSE, close_kernel);
 
-    if (bar.angle <= min_bar_angle_ && bar.angle >= -min_bar_angle_)
-        return false;
+        std::vector<std::vector<cv::Point>> contours;
+        findContours(morphology_img_, contours,cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-    return true;
+        for (auto &contour : contours)
+        {
+            if (contourArea(contour) < 20)
+                continue;
+
+            cv::RotatedRect rect = minAreaRect(contour);
+
+            cv::Point2f vertices[4];
+            rect.points(vertices);
+
+            float angle;
+            float width = rect.size.width;
+            float height = rect.size.height;
+            float max_len = std::max(width, height);
+            float ratio = max_len / std::min(width, height);
+
+            if (max_len == height)
+                angle = rect.angle + 90.0f;
+            else
+                angle = rect.angle;
+
+            Bar tmpbar;
+            tmpbar.rect = rect;
+            tmpbar.center = rect.center;
+            tmpbar.ratio = ratio;
+            tmpbar.angle = angle;
+
+            if (isValidBar(tmpbar))
+            {
+                tmpbars.push_back(tmpbar);
+            }
+        }
+
+        sort(tmpbars.begin(), tmpbars.end(), [](const Bar& a, const Bar& b) {
+            return a.center.x < b.center.x;
+        });
+
+        for (auto &tmpbar : tmpbars)
+        {
+            standardizeBar(tmpbar);
+        }
+
+        std::cout<<"tmpbars.size(): "<<tmpbars.size()<<std::endl;
+        armor.bars = tmpbars;
+    }
 }
 
-// 对灯条异常情况的处理
+bool deepProcess::isValidArmor(inferredArmor &armor)
+{
+    // 灯条两两匹配
+    std::vector<Bar> bars = armor.bars;
+    int match[2];
+
+    auto pairArmor = [this](std::vector<Bar> &bars, int match[2])
+    {
+        for (int i = 0; i < bars.size() - 1; i++)
+        {
+            for (int j = i + 1; j < bars.size(); j++)
+            {
+                Bar left_bar = bars[i];
+                Bar right_bar = bars[j];
+
+                double distance = std::sqrt(std::pow(left_bar.center.x - right_bar.center.x, 2) + std::pow(left_bar.center.y - right_bar.center.y, 2));
+
+                double bars_length = left_bar.long_one + right_bar.long_one;
+                double ratio = std::max(left_bar.long_one, right_bar.long_one) / std::min(left_bar.long_one, right_bar.long_one);
+
+                double raw_angle_diff = fabs(left_bar.angle - right_bar.angle);
+                double angle = fmod(raw_angle_diff, 180);
+                if (angle > 90)
+                    angle = 180 - angle;
+
+                if (distance <= bars_length * min_bars_distance_ || distance >= bars_length * max_bars_distance_) {
+                    std::cout<<"armor distance false"<<std::endl;
+                    continue;
+                }
+
+                if (ratio > max_bars_ratio_) {
+                    std::cout<<"armor ratio false"<<std::endl;
+                    continue;
+                }
+
+                if (angle > max_bars_angle_) {
+                    std::cout<<"armor angle false"<<std::endl;
+                    continue;
+                }
+
+                match[0] = i;
+                match[1] = j;
+
+                std::cout<<"match: "<<match[0]<<"    "<<match[1]<<std::endl;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (pairArmor(bars, match))
+    {
+        armor.bars.clear();
+        armor.bars.push_back(bars[match[0]]);
+        armor.bars.push_back(bars[match[1]]);
+        return true;
+    }
+
+    return false;
+}
+
+// 定位装甲板准确位置
+void deepProcess::armorFiliter(std::vector<inferredArmor> &qualifiedArmors, std::vector<finalArmor> &finalArmors)
+{
+    for (auto &armor : qualifiedArmors)
+    {
+        if (armor.bars.empty())
+        {
+            std::cout<<"No bars found!"<<std::endl;
+            continue;
+        }
+
+        if (!isValidArmor(armor))
+            continue;
+
+        std::cout<<"find armors"<<std::endl;
+
+        std::vector<Bar> bars = armor.bars;
+
+        // 计算装甲板四顶点
+        std::vector<cv::Point2f> left(4);            // lb, lt, rt, rb
+        std::vector<cv::Point2f> right(4);
+        std::vector<cv::Point2f> armor_points(4);    // lb, lt, rt, rb
+        cv::Point2f center;
+
+        // 转换为全局坐标系
+        for (auto &bar : bars)
+        {
+            for (auto &point : bar.sorted_points)
+            {
+                point += cv::Point2f(armor.box.x, armor.box.y);
+            }
+
+            bar.center += cv::Point2f(armor.box.x, armor.box.y);
+        }
+
+        left = bars[0].sorted_points;
+        right = bars[1].sorted_points;
+
+        armor_points[0] = (left[0] + left[3]) * 0.5;
+        armor_points[1] = (left[1] + left[2]) * 0.5;
+        armor_points[2] = (right[1] + right[2]) * 0.5;
+        armor_points[3] = (right[0] + right[3]) * 0.5;
+
+        // 对角线计算装甲板中心点
+        double line1_k = (armor_points[2].y - armor_points[0].y) / (armor_points[2].x - armor_points[0].x + 1e-5);
+        double line2_k = (armor_points[1].y - armor_points[3].y) / (armor_points[1].x - armor_points[3].x + 1e-5);
+        double line1_b = armor_points[2].y - line1_k * armor_points[2].x;
+        double line2_b = armor_points[1].y - line2_k * armor_points[1].x;
+
+        double center_x = (line1_b - line2_b) / (line2_k - line1_k + 1e-5);
+        double center_y = line1_k * center_x + line1_b;
+        center.x = static_cast<float>(center_x);
+        center.y = static_cast<float>(center_y);
+
+        // 存储最终结果
+        finalArmor final_armor;
+        final_armor.armor_points = armor_points;
+        final_armor.center = center;
+        final_armor.color = armor.color;
+        final_armor.num_roi = armor.num_roi;
+        final_armor.cls_conf = armor.cls_conf;
+
+        finalArmors.push_back(final_armor);
+    }
+}
+
+// 绘制灯条
+void deepProcess::show_bar(cv::Mat &img, std::vector<inferredArmor> &qualifiedArmors)
+{
+    for (auto &armor : qualifiedArmors)
+    {
+        for (auto &bar : armor.bars)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                line(img, bar.sorted_points[i], bar.sorted_points[(i + 1) % 4], cv::Scalar(0, 255, 0), 2);
+            }
+        }
+    }
+}
+
+// 绘制检测框
+void deepProcess::show_box(cv::Mat &img, std::vector<finalArmor> &finalArmors)
+{
+    for (auto &armor : finalArmors)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            line(img, armor.armor_points[i], armor.armor_points[(i + 1) % 4], cv::Scalar(0, 255, 0), 2);
+        }
+        circle(img, armor.center, 3, cv::Scalar(0, 255, 0), -1);
+        putText(img, armor.label, armor.center+cv::Point2f(5,5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
+
+        std::cout<<"label: "<<armor.label<<std::endl;
+        std::string color = colors[armor.color];
+        putText(img, color, armor.armor_points[0], cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
+    }
+}
+
+// 绘制追踪框
+void deepProcess::show_track(cv::Mat &img, sensor_msgs::CameraInfoConstPtr &camera_info_, std::vector<geometry_msgs::PointStamped> all_points_, geometry_msgs::PointStamped compute_point_)
+{
+    // 获取相机内参矩阵
+    cv::Mat_<double> camera_mat_k(3, 3, const_cast<double*>(camera_info_->K.data()));
+    // 获取旋转向量
+    cv::Mat rvec = cv::Mat::eye(3, 3, CV_64F);
+
+    std::vector<cv::Point2f> image_points;
+    int count{};
+
+    // draw track
+    for (auto &point : all_points_)
+    {
+        ++count;
+        // 获取平移向量
+        cv::Mat tvec_track = cv::Mat((cv::Mat_<double>(3, 1) << point.point.x, point.point.y, point.point.z));
+
+        // 将三维点投影到图像平面
+        projectPoints(std::vector{ cv::Point3f(0, 0, 0)}, rvec, tvec_track,
+                      camera_mat_k, camera_info_->D, image_points);
+
+        if (count != all_points_.size())
+        {
+            // armor
+            for (auto point : image_points)
+            {
+                circle(img, point, 10, cv::Scalar(0, 255, 0), -1);
+            }
+        }
+        else
+        {
+            // center
+            for (auto point : image_points)
+            {
+                circle(img, point, 10, cv::Scalar(0, 0, 255), -1);
+            }
+        }
+    }
+
+    // draw compute
+    // 获取平移向量
+    cv::Mat tvec_compute = cv::Mat((cv::Mat_<double>(3, 1) << compute_point_.point.x, compute_point_.point.y, compute_point_.point.z));
+
+    projectPoints(std::vector{ cv::Point3f(0, 0, 0)}, rvec, tvec_compute,
+                  camera_mat_k, camera_info_->D, image_points);
+
+    for (auto point : image_points)
+    {
+        circle(img, point, 10, cv::Scalar(0, 255, 0), -1);
+    }
+}
+
+
+// 对灯条异常情况的处理(放弃了这种处理，但不舍得删，就留这里吧)
 // bool Additional_processing(std::vector<Bar> &tmpbars, cv::Point roi_center)
 // {
 //     // 能进入这一步的装甲板，如果是正常的，那么大概率只有两种情况：
@@ -420,271 +702,3 @@ bool deepProcess::isValidBar(Bar &bar)
 //         return false;
 //     }
 // }
-
-// 定位灯条准确位置
-void deepProcess::barFiliter(std::vector<inferredArmor> &qualifiedArmors)
-{
-    // 遍历每个装甲板
-    for (auto &armor : qualifiedArmors)
-    {
-        cv::UMat roi = armor.hsv_roi;
-        std::vector<Bar> tmpbars;
-
-        cv::Mat close_kernel = getStructuringElement(cv::MORPH_RECT, cv::Size(3, 7));
-        morphologyEx(roi, morphology_img_, cv::MORPH_CLOSE, close_kernel);
-
-        std::vector<std::vector<cv::Point>> contours;
-        findContours(morphology_img_, contours,cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-        for (auto &contour : contours)
-        {
-            if (contourArea(contour) < 20)
-                continue;
-
-            cv::RotatedRect rect = minAreaRect(contour);
-
-            cv::Point2f vertices[4];
-            rect.points(vertices);
-
-            float angle;
-            float width = rect.size.width;
-            float height = rect.size.height;
-            float max_len = std::max(width, height);
-            float ratio = max_len / std::min(width, height);
-
-            if (max_len == height)
-                angle = rect.angle + 90.0f;
-            else
-                angle = rect.angle;
-
-            Bar tmpbar;
-            tmpbar.rect = rect;
-            tmpbar.center = rect.center;
-            tmpbar.ratio = ratio;
-            tmpbar.angle = angle;
-
-            if (isValidBar(tmpbar))
-            {
-                tmpbars.push_back(tmpbar);
-            }
-        }
-
-        sort(tmpbars.begin(), tmpbars.end(), [](const Bar& a, const Bar& b) {
-            return a.center.x < b.center.x;
-        });
-
-        for (auto &tmpbar : tmpbars)
-        {
-            standardizeBar(tmpbar);
-        }
-
-        armor.bars = tmpbars;
-    }
-}
-
-bool deepProcess::isValidArmor(inferredArmor &armor)
-{
-    // 灯条两两匹配
-    std::vector<Bar> bars = armor.bars;
-    int match[2];
-
-    auto pairArmor = [this](std::vector<Bar> &bars, int match[2])
-    {
-        for (int i = 0; i < bars.size() - 1; i++)
-        {
-            for (int j = i + 1; j < bars.size(); j++)
-            {
-                Bar left_bar = bars[i];
-                Bar right_bar = bars[j];
-
-                double distance = std::sqrt(std::pow(left_bar.center.x - right_bar.center.x, 2) + std::pow(left_bar.center.y - right_bar.center.y, 2));
-
-                double bars_length = left_bar.long_one + right_bar.long_one;
-                double ratio = std::max(left_bar.long_one, right_bar.long_one) / std::min(left_bar.long_one, right_bar.long_one);
-
-                double raw_angle_diff = fabs(left_bar.angle - right_bar.angle);
-                double angle = fmod(raw_angle_diff, 180);
-                if (angle > 90)
-                    angle = 180 - angle;
-
-                if (distance <= bars_length * min_bars_distance_ || distance >= bars_length * max_bars_distance_)
-                    continue;
-
-                if (ratio > max_bars_ratio_)
-                    continue;
-
-                if (angle > max_bars_angle_)
-                    continue;
-
-                match[0] = i;
-                match[1] = j;
-
-                std::cout<<"match: "<<match[0]<<"    "<<match[1]<<std::endl;
-                return true;
-            }
-        }
-        return false;
-    };
-
-    if (pairArmor(bars, match))
-    {
-        armor.bars.clear();
-        armor.bars.push_back(bars[match[0]]);
-        armor.bars.push_back(bars[match[1]]);
-        return true;
-    }
-
-    return false;
-}
-
-// 定位装甲板准确位置
-void deepProcess::armorFiliter(std::vector<inferredArmor> &qualifiedArmors, std::vector<finalArmor> &finalArmors)
-{
-    for (auto &armor : qualifiedArmors)
-    {
-        if (armor.bars.empty())
-        {
-            std::cout<<"No bars found!"<<std::endl;
-            continue;
-        }
-
-        if (!isValidArmor(armor))
-            continue;
-
-        std::cout<<"find armors"<<std::endl;
-
-        std::vector<Bar> bars = armor.bars;
-
-        // 计算装甲板四顶点
-        std::vector<cv::Point2f> left(4);            // lb, lt, rt, rb
-        std::vector<cv::Point2f> right(4);
-        std::vector<cv::Point2f> armor_points(4);    // lt, rt, rb, lb
-        cv::Point2f center;
-
-        // 转换为全局坐标系
-        for (auto &bar : bars)
-        {
-            for (auto &point : bar.sorted_points)
-            {
-                point += cv::Point2f(armor.box.x, armor.box.y);
-            }
-
-            bar.center += cv::Point2f(armor.box.x, armor.box.y);
-        }
-
-        left = bars[0].sorted_points;
-        right = bars[1].sorted_points;
-
-        armor_points[0] = (left[1] + left[2]) * 0.5;
-        armor_points[1] = (right[1] + right[2]) * 0.5;
-        armor_points[2] = (right[0] + right[3]) * 0.5;
-        armor_points[3] = (left[0] + left[3]) * 0.5;
-
-        // 对角线计算装甲板中心点
-        double line1_k = (armor_points[1].y - armor_points[3].y) / (armor_points[1].x - armor_points[3].x + 1e-5);
-        double line2_k = (armor_points[0].y - armor_points[2].y) / (armor_points[0].x - armor_points[2].x + 1e-5);
-        double line1_b = armor_points[1].y - line1_k * armor_points[1].x;
-        double line2_b = armor_points[0].y - line2_k * armor_points[0].x;
-
-        double center_x = (line1_b - line2_b) / (line2_k - line1_k + 1e-5);
-        double center_y = line1_k * center_x + line1_b;
-        center.x = static_cast<float>(center_x);
-        center.y = static_cast<float>(center_y);
-
-        // 存储最终结果
-        finalArmor final_armor;
-        final_armor.armor_points = armor_points;
-        final_armor.center = center;
-        final_armor.color = armor.color;
-        final_armor.num_roi = armor.num_roi;
-        final_armor.cls_conf = armor.cls_conf;
-
-        finalArmors.push_back(final_armor);
-    }
-}
-
-// 绘制灯条
-void deepProcess::show_bar(cv::Mat &img, std::vector<inferredArmor> &qualifiedArmors)
-{
-    for (auto &armor : qualifiedArmors)
-    {
-        for (auto &bar : armor.bars)
-        {
-            for (int i = 0; i < 4; i++)
-            {
-                line(img, bar.sorted_points[i], bar.sorted_points[(i + 1) % 4], cv::Scalar(0, 255, 0), 2);
-            }
-        }
-    }
-}
-
-// 绘制检测框
-void deepProcess::show_box(cv::Mat &img, std::vector<finalArmor> &finalArmors)
-{
-    for (auto &armor : finalArmors)
-    {
-        for (int i = 0; i < 4; i++)
-        {
-            line(img, armor.armor_points[i], armor.armor_points[(i + 1) % 4], cv::Scalar(0, 255, 0), 2);
-        }
-        circle(img, armor.center, 3, cv::Scalar(0, 255, 0), -1);
-        putText(img, armor.label, armor.center+cv::Point2f(5,5), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
-
-        std::cout<<"label: "<<armor.label<<std::endl;
-        std::string color = colors[armor.color];
-        putText(img, color, armor.armor_points[0], cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 2);
-    }
-}
-
-// 绘制追踪框
-void deepProcess::show_track(cv::Mat &img, sensor_msgs::CameraInfoConstPtr &camera_info_, std::vector<geometry_msgs::PointStamped> all_points_, geometry_msgs::PointStamped compute_point_)
-{
-    // 获取相机内参矩阵
-    cv::Mat_<double> camera_mat_k(3, 3, const_cast<double*>(camera_info_->K.data()));
-    // 获取旋转向量
-    cv::Mat rvec = cv::Mat::eye(3, 3, CV_64F);
-
-    std::vector<cv::Point2f> image_points;
-    int count{};
-
-    // draw track
-    for (auto &point : all_points_)
-    {
-        ++count;
-        // 获取平移向量
-        cv::Mat tvec_track = cv::Mat((cv::Mat_<double>(3, 1) << point.point.x, point.point.y, point.point.z));
-
-        // 将三维点投影到图像平面
-        projectPoints(std::vector{ cv::Point3f(0, 0, 0)}, rvec, tvec_track,
-                      camera_mat_k, camera_info_->D, image_points);
-
-        if (count != all_points_.size())
-        {
-            // armor
-            for (auto point : image_points)
-            {
-                circle(img, point, 10, cv::Scalar(0, 255, 0), -1);
-            }
-        }
-        else
-        {
-            // center
-            for (auto point : image_points)
-            {
-                circle(img, point, 10, cv::Scalar(0, 0, 255), -1);
-            }
-        }
-    }
-
-    // draw compute
-    // 获取平移向量
-    cv::Mat tvec_compute = cv::Mat((cv::Mat_<double>(3, 1) << compute_point_.point.x, compute_point_.point.y, compute_point_.point.z));
-
-    projectPoints(std::vector{ cv::Point3f(0, 0, 0)}, rvec, tvec_compute,
-                  camera_mat_k, camera_info_->D, image_points);
-
-    for (auto point : image_points)
-    {
-        circle(img, point, 10, cv::Scalar(0, 255, 0), -1);
-    }
-}

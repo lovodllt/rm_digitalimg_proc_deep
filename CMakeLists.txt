@@ -8,8 +8,8 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 set(OpenVINO_DIR "/opt/intel/openvino_2023.3.0/runtime/cmake")
-set(OpenCV_DIR "/home/lovod/opencv-4.8.1/build/installed/lib/cmake/opencv4")
-#set(OpenCV_DIR "/usr/lib/x86_64-linux-gnu/cmake")
+#set(OpenCV_DIR "/home/lovod/opencv-4.8.1/build/installed/lib/cmake/opencv4")
+set(OpenCV_DIR "/usr/lib/x86_64-linux-gnu/cmake")
 
 find_package(catkin REQUIRED COMPONENTS
         roscpp
@@ -29,9 +29,9 @@ find_package(catkin REQUIRED COMPONENTS
         rm_msgs
 )
 
-find_package(OpenCV 4.8.1 EXACT REQUIRED)
+#find_package(OpenCV 4.8.1 EXACT REQUIRED)
 find_package(OpenVINO REQUIRED)
-#find_package(OpenCV 4 REQUIRED)
+find_package(OpenCV 4 REQUIRED)
 
 generate_dynamic_reconfigure_options(cfg/Inference.cfg)
 
@@ -78,18 +78,18 @@ target_link_libraries(rm_digitalimg_proc_deep
         openvino::runtime
 )
 
-#add_executable(
-#        video_detect
-#        src/video_detect.cpp
-#        src/inference.cpp
-#        src/number_classifier.cpp
-#)
+add_executable(
+        video_detect
+        src/video_detect.cpp
+        src/inference.cpp
+        src/number_classifier.cpp
+)
 
-#target_link_libraries(video_detect
-#        ${catkin_LIBRARIES}
-#        ${OpenCV_LIBS}
-#        openvino::runtime
-#)
+target_link_libraries(video_detect
+        ${catkin_LIBRARIES}
+        ${OpenCV_LIBS}
+        openvino::runtime
+)
 
 
 
