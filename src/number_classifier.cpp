@@ -27,16 +27,9 @@ void number_classifier::warp(finalArmor &armor)
         cv::Point2f(warp_width_, bottom_light_y_),
     };
 
-    std::cout << "Src Points: ";
-    for (auto& pt : src_pts) std::cout << pt << " ";
-    std::cout << "\nDst Points: ";
-    for (auto& pt : dst_pts) std::cout << pt << " ";
-    std::cout << std::endl;
-
     auto warp_mat = getPerspectiveTransform(src_pts, dst_pts);
     warp_mat.at<double>(0, 2) /= 1000.0;
     warp_mat.at<double>(1, 2) /= 1000.0;
-    std::cout << "Warp Matrix: " << warp_mat << std::endl;
 
     try
     {
@@ -57,9 +50,9 @@ cv::Mat number_classifier::extractNumbers(finalArmor &armor)
 
     int roi_w = armor.num_roi.cols;
     int roi_h = armor.num_roi.rows;
-    int crop_x = static_cast<int>(roi_w * 0.2);
+    int crop_x = static_cast<int>(roi_w * 0.2 - 20);
     int crop_y = 0;
-    int crop_w = static_cast<int>(roi_w * 0.5);
+    int crop_w = static_cast<int>(roi_w * 0.5 + 20);
     int crop_h = roi_h;
 
     crop_x = std::max(0, crop_x);
@@ -86,6 +79,7 @@ void number_classifier::classify(std::vector<finalArmor> &finalArmors)
         cv::Mat num_mat, num_blob;
 
         num_mat = extractNumbers(armor);
+        imshow("num",num_mat);
 
         if (num_mat.empty())
         {
@@ -93,7 +87,6 @@ void number_classifier::classify(std::vector<finalArmor> &finalArmors)
             continue;
         }
 
-        imshow("number", num_mat);
         cv::dnn::blobFromImage(num_mat, num_blob);
 
         net_.setInput(num_blob);

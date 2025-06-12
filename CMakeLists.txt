@@ -78,18 +78,18 @@ target_link_libraries(rm_digitalimg_proc_deep
         openvino::runtime
 )
 
-add_executable(
-        video_detect
-        src/video_detect.cpp
-        src/inference.cpp
-        src/number_classifier.cpp
-)
-
-target_link_libraries(video_detect
-        ${catkin_LIBRARIES}
-        ${OpenCV_LIBS}
-        openvino::runtime
-)
+#add_executable(
+#        video_detect
+#        src/video_detect.cpp
+#        src/inference.cpp
+#        src/number_classifier.cpp
+#)
+#
+#target_link_libraries(video_detect
+#        ${catkin_LIBRARIES}
+#        ${OpenCV_LIBS}
+#        openvino::runtime
+#)
 
 
 

@@ -14,7 +14,6 @@ void Processor::onInit()
         ros::SingleThreadedSpinner spinner;
         spinner.spin(&my_queue);
     });
-
 }
 
 void Processor::initialize(ros::NodeHandle &nh)
@@ -23,11 +22,21 @@ void Processor::initialize(ros::NodeHandle &nh)
     auto inference_params_init = [this, &nh]()
     {
         ROS_INFO("reading inference param");
-        confidence_threshold_ = nh.param("score_threshold", decltype(confidence_threshold_){});
-        nms_threshold_ = nh.param("nms_threshold", decltype(nms_threshold_){});
+        confidence_threshold_ = nh.param("score_threshold", decltype(confidence_threshold_){0.3});
+        nms_threshold_ = nh.param("nms_threshold", decltype(nms_threshold_){0.3});
+        int target_color = nh.param("target_color", static_cast<int>(TargetColor::BLUE));
+        target_color_ = static_cast<TargetColor>(target_color);
+        int draw_type = nh.param("draw_type", static_cast<int>(DrawType::RAW));
+        draw_type_ = static_cast<DrawType>(draw_type);
+        ROS_INFO("inference params reading done");
+
+        ROS_INFO("confidence_threshold_: %f", confidence_threshold_);
+        ROS_INFO("nms_threshold_: %f", nms_threshold_);
+        ROS_INFO("target_color_: %d", target_color_);
+        ROS_INFO("draw_type_: %d", draw_type_);
     };
 
-    inference_params_init();
+    //inference_params_init();
 
     // 创建动态配置服务器并设置回调函数
     inference_cfg_srv_ = std::make_unique<dynamic_reconfigure::Server<InferenceConfig>>(ros::NodeHandle(nh_, "inference_condition"));
@@ -41,8 +50,34 @@ void Processor::initialize(ros::NodeHandle &nh)
     // it_用于创建图像传输对象，用于发布和订阅图像消息(相比于advertise<sensor_msgs::Image>，在优化速率的同时可以处理多种图像压缩格式)
     it_ = std::make_shared<image_transport::ImageTransport>(nh_);
     img_pub_ = it_->advertise("debug_image", 1);
-    cam_sub_ = it_->subscribeCamera("/hk_camera/image_raw", 10, &Processor::callback, this);
+    cam_sub_ = it_->subscribeCamera("/galaxy_camera/image_raw", 10, &Processor::callback, this);
     target_pub_ = nh.advertise<decltype(target_array_)>("/processor/result_msg", 10);
+}
+
+// 动态配置服务器的回调函数
+void Processor::inferenceconfigCB(InferenceConfig &config, uint32_t level)
+{
+    confidence_threshold_ = config.confidence_threshold;
+    nms_threshold_ = config.nms_threshold;
+
+    gamma_ = config.gamma;
+    l_mean_threshold_ = config.l_mean_threshold;
+
+    target_color_ = static_cast<TargetColor>(config.target_color);
+    draw_type_ = static_cast<DrawType>(config.draw_type);
+
+    if (draw_type_ != DrawType::TRACK)
+    {
+        detection_sub_.shutdown();
+        track_sub_.shutdown();
+        compute_sub_.shutdown();
+    }
+    else
+    {
+        detection_sub_ = nh_.subscribe<rm_msgs::TargetDetectionArray>("/detection", 10, &Processor::detectionCB, this);
+        track_sub_ = nh_.subscribe("/track", 1, &Processor::trackCB, this);
+        compute_sub_ = nh_.subscribe("/compute_target_position", 1, &Processor::computeCB, this);
+    }
 }
 
 // "/detection"的回调函数，获取目标姿态信息，转换为rvec和tvec
@@ -90,8 +125,10 @@ void Processor::trackCB(const rm_msgs::TrackData &track_data)
     double dz = track_data.dz;  // 相邻装甲板的高度差
     int armor_num = track_data.armors_num;
     geometry_msgs::PointStamped armor_position;
-    double r{};
+    geometry_msgs::PointStamped car_position;
+    double r = 0;
     bool is_current_pair = true;
+
     // 获取坐标转换信息
     geometry_msgs::TransformStamped transformStamped = tf_buffer_->lookupTransform(
         "camera_optical_frame", track_data.header.frame_id, track_data.header.stamp, ros::Duration(1));
@@ -131,9 +168,27 @@ void Processor::trackCB(const rm_msgs::TrackData &track_data)
     }
 
     // 车体的坐标变换
+    // car_position.point.x = xc;
+    // car_position.point.y = yc;
+    // car_position.point.z = zc;
+    //
+    // try
+    // {
+    //     // 应用变换到点上
+    //     tf2::doTransform(car_position, car_position, transformStamped);
+    // }
+    // catch (const std::exception &e)
+    // {
+    //     ROS_ERROR("Error: %s", e.what());
+    //     return;
+    // }
+    //
+    // all_points_.push_back(car_position);
+
     armor_position.point.x = xc;
     armor_position.point.y = yc;
     armor_position.point.z = zc;
+
     try
     {
         // 应用变换到点上
@@ -162,76 +217,25 @@ void Processor::computeCB(const rm_msgs::TrackData &track_data)
     catch (const std::exception &e)
     {
         ROS_ERROR("Error: %s", e.what());
-    }
-
-}
-
-// 动态配置服务器的回调函数
-void Processor::inferenceconfigCB(InferenceConfig &config, uint32_t level)
-{
-    confidence_threshold_ = config.score_threshold;
-    nms_threshold_ = config.nms_threshold;
-
-    target_color_ = static_cast<TargetColor>(config.target_color);
-    draw_type_ = static_cast<DrawType>(config.draw_type);
-
-    if (draw_type_ != DrawType::TARCK)
-    {
-        detection_sub_.shutdown();
-        track_sub_.shutdown();
-        compute_sub_.shutdown();
-    }
-    else
-    {
-        detection_sub_ = nh_.subscribe<rm_msgs::TargetDetectionArray>("/detection", 10, &Processor::detectionCB, this);
-        track_sub_ = nh_.subscribe("/track", 1, &Processor::trackCB, this);
-        compute_sub_ = nh_.subscribe("/compute_target_position", 1, &Processor::computeCB, this);
+        return;
     }
 }
 
 // 图像绘制及发布
-void Processor::draw()
+void Processor::draw(cv::Mat &img)
 {
-    cv::Mat draw_img;
-    sensor_msgs::ImagePtr img_msg;
-
-    if (draw_type_ == DrawType::DISABLE)
-        return;
-    else if (draw_type_ == DrawType::RAW)
+    if (draw_type_ == DrawType::RAW) {}
+    else if (draw_type_ == DrawType::ARMOR)
     {
-        raw_img_.copyTo(draw_img);
-        img_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", draw_img).toImageMsg();
+        show_box(img, finalArmors);
     }
-    else if (draw_type_ == DrawType::BINARY)
+    else if (draw_type_ == DrawType::TRACK)
     {
-        binary_img_.copyTo(draw_img);
-        img_msg = cv_bridge::CvImage(std_msgs::Header(), "mono8", draw_img).toImageMsg();
-    }
-    else if (draw_type_ == DrawType::MORPHOLOGY)
-    {
-        morphology_img_.copyTo(draw_img);
-        img_msg = cv_bridge::CvImage(std_msgs::Header(), "mono8", draw_img).toImageMsg();
-    }
-    else if (draw_type_ == DrawType::BARS)
-    {
-        raw_img_.copyTo(draw_img);
-        show_bar(draw_img, qualifiedArmors);
-        img_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", draw_img).toImageMsg();
-    }
-    else if (draw_type_ == DrawType::ARMORS)
-    {
-        raw_img_.copyTo(draw_img);
-        show_box(draw_img, finalArmors);
-        img_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", draw_img).toImageMsg();
-    }
-    else if (draw_type_ == DrawType::TARCK)
-    {
-        raw_img_.copyTo(draw_img);
-        show_box(draw_img, finalArmors);
-        show_track(draw_img, camera_info_, all_points_, compute_point_);
-        img_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", draw_img).toImageMsg();
+        show_box(img, finalArmors);
+        show_track(img, camera_info_, all_points_, compute_point_);
     }
 
+    sensor_msgs::ImagePtr img_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", img).toImageMsg();
     img_pub_.publish(img_msg);
 }
 
@@ -239,66 +243,79 @@ void Processor::draw()
 void Processor::callback(const sensor_msgs::ImageConstPtr &img, const sensor_msgs::CameraInfoConstPtr &info)
 {
     this->target_array_.detections.clear();
+    this->qualifiedArmors.clear();
+    this->finalArmors.clear();
 
-    // 记录相机信息
-    camera_info_ = info;
-    target_array_.header = info->header;
-
-    // 将ROS图像消息转换为OpenCV图像
-    const cv::Mat tmpframe = cv_bridge::toCvShare(img, "bgr8")->image;
-    raw_img_ = tmpframe.getUMat(cv::ACCESS_READ);
-
-    // 求图像中心
-    int img_w = raw_img_.rows;
-    int img_h = raw_img_.cols;
-    int img_center_x = img_w / 2;
-    int img_center_y = img_h / 2;
-
-    // 图像预处理
-    dataImg img_data = preprocess_img(raw_img_);
-
-    // 装甲板识别
-    std::vector<finalArmor> finalArmors;
-    finalArmors = InferAndPostprocess(img_data, confidence_threshold_, nms_threshold_, target_color_);
-
-    // 绘制及发布图像
-    draw();
-
-    // 将finalarmor信息转换为track
-    for (auto &armor : finalArmors)
+    try
     {
-        cv::Point2f center = armor.center;
-        double distanceToImg = sqrt(pow(center.x - img_center_x, 2) + pow(center.y - img_center_y, 2));
+        // 记录相机信息
+        camera_info_ = info;
+        target_array_.header = info->header;
 
-        rm_msgs::TargetDetection target;
+        // 将ROS图像消息转换为OpenCV图像
+        cv::Mat frame = cv_bridge::toCvShare(img, "bgr8")->image;
 
-        // 设置置信度和装甲板中心到图像中心的距离
-        target.confidence = armor.cls_conf;
-        target.distance_to_image_center = distanceToImg;
+        // 求图像中心
+        float img_w = frame.cols;
+        float img_h = frame.rows;
+        float img_center_x = img_w / 2;
+        float img_center_y = img_h / 2;
 
-        // 获取相机roi的偏移量
-        target.pose.position.x = info->roi.x_offset;
-        target.pose.position.y = info->roi.y_offset;
+        // 图像预处理
+        dataImg img_data = preprocess_img(frame);
 
-        // 序列化装甲板角点
-        int32_t temp[8];
-        for (int i = 0; i < 4; i++)
+        // 装甲板识别
+        finalArmors = InferAndPostprocess(img_data);
+        classify(finalArmors);
+
+        // 将finalarmor信息转换为track
+        for (auto &armor : finalArmors)
         {
-            temp[i * 2] = static_cast<int>(armor.armor_points[i].x);
-            temp[i * 2 + 1] = static_cast<int>(armor.armor_points[i].y);
+            cv::Point2f center = armor.center;
+            double distanceToImg = sqrt(pow(center.x - img_center_x, 2) + pow(center.y - img_center_y, 2));
+
+            rm_msgs::TargetDetection target;
+
+            // 设置置信度和装甲板中心到图像中心的距离
+            target.confidence = armor.cls_conf;
+            target.distance_to_image_center = distanceToImg;
+
+            // 序列化装甲板角点
+            int32_t temp[8];
+            for (int i = 0; i < 4; i++)
+            {
+                temp[i * 2] = static_cast<int>(armor.armor_points[i].x);
+                temp[i * 2 + 1] = static_cast<int>(armor.armor_points[i].y);
+            }
+
+            // 将角点信息复制到one_target的pose.orientation中(利用四元数的4个float32存储8个int32)
+            memcpy(&target.pose.orientation.x, &temp[0], sizeof(int32_t) * 2);
+            memcpy(&target.pose.orientation.y, &temp[2], sizeof(int32_t) * 2);
+            memcpy(&target.pose.orientation.z, &temp[4], sizeof(int32_t) * 2);
+            memcpy(&target.pose.orientation.w, &temp[6], sizeof(int32_t) * 2);
+
+            target_array_.detections.push_back(target);
         }
 
-        // 将角点信息复制到one_target的pose.orientation中(利用四元数的4个float32存储8个int32)
-        memcpy(&target.pose.orientation.x, &temp[0], sizeof(int32_t) * 2);
-        memcpy(&target.pose.orientation.y, &temp[2], sizeof(int32_t) * 2);
-        memcpy(&target.pose.orientation.z, &temp[4], sizeof(int32_t) * 2);
-        memcpy(&target.pose.orientation.w, &temp[6], sizeof(int32_t) * 2);
+        for (auto &target : target_array_.detections)
+        {
+            target.pose.position.x = info->roi.x_offset;
+            target.pose.position.y = info->roi.y_offset;
+        }
+        target_array_.is_red = target_is_red_;
 
-        target_array_.detections.push_back(target);
+        target_pub_.publish(target_array_);
+
+        // 绘制及发布图像
+        if (draw_type_ != DrawType::DISABLE)
+        {
+            draw(frame);
+        }
     }
-
-    //target_array_.is_red = target_is_red_;
-    target_pub_.publish(target_array_);
+    catch (const cv_bridge::Exception &e)
+    {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+    }
 }
 
 }

@@ -30,20 +30,19 @@ void deepProcess::using_once()
 // 图像预处理
 dataImg deepProcess::preprocess_img(cv::Mat &img)
 {
-    // 0.自动提亮
+    // 0.调整亮度
     cv::Mat lab;
     cvtColor(img, lab, cv::COLOR_BGR2Lab);
     std::vector<cv::Mat> channels;
     split(lab, channels);
 
     double l_mean = mean(channels[0])[0];
-    if (l_mean < 10)
+    if (l_mean < l_mean_threshold_)
     {
-        double gamma = 0.7;
         cv::Mat lut(1, 256, CV_8UC1);
         for (int i = 0; i < 256; i++)
         {
-            lut.at<uchar>(i) = cv::saturate_cast<uchar>(pow(i / 255.0, gamma) * 255.0);
+            lut.at<uchar>(i) = cv::saturate_cast<uchar>(pow(i / 255.0, gamma_) * 255.0);
         }
         LUT(channels[0], lut, channels[0]);
     }
@@ -96,13 +95,13 @@ dataImg deepProcess::preprocess_img(cv::Mat &img)
 }
 
 // 模型推理(主函数)
-std::vector<finalArmor> deepProcess::InferAndPostprocess(dataImg &imgdata, float score_threshold_, float nms_threshold_, TargetColor target_color)
+std::vector<finalArmor> deepProcess::InferAndPostprocess(dataImg &imgdata)
 {
-    // 0.清空容器
-    qualifiedArmors.clear();
-    finalArmors.clear();
 
-    // 1.初始化模型
+    finalArmors.clear();
+    qualifiedArmors.clear();
+
+   // 1.初始化模型
     using_once();
 
     // 2.创建输入张量 (获取输入图像格式，维度格式[N,C,H,W]，预处理后的图像指针)
@@ -126,7 +125,7 @@ std::vector<finalArmor> deepProcess::InferAndPostprocess(dataImg &imgdata, float
     {
         float cls_conf = output_buffer.at<float>(i, 4);
         // 过滤掉置信度小于阈值的检测框
-        if (cls_conf > score_threshold_)
+        if (cls_conf > confidence_threshold_)
         {
             // 提取边界框信息
             float cx = output_buffer.at<float>(i, 0);
@@ -161,7 +160,7 @@ std::vector<finalArmor> deepProcess::InferAndPostprocess(dataImg &imgdata, float
 
     // 7.NMS处理
     std::vector<int> indices;
-    cv::dnn::NMSBoxes(preArmors.boxes, preArmors.cls_conf, score_threshold_, nms_threshold_, indices);
+    cv::dnn::NMSBoxes(preArmors.boxes, preArmors.cls_conf, confidence_threshold_, nms_threshold_, indices);
 
     // 8.传统处理角点
     for (auto i : indices)
@@ -174,7 +173,7 @@ std::vector<finalArmor> deepProcess::InferAndPostprocess(dataImg &imgdata, float
         std::cout<<"model find armors"<<std::endl;
         std::cout<<"box: "<<infer_armor.box<<"    cls_conf: "<<infer_armor.cls_conf<<std::endl;
 
-        colorFiliter(imgdata.input, infer_armor, qualifiedArmors, target_color);
+        colorFiliter(imgdata.input, infer_armor, qualifiedArmors, target_color_);
     }
     barFiliter(qualifiedArmors);
     armorFiliter(qualifiedArmors, finalArmors);
@@ -312,10 +311,10 @@ void deepProcess::barFiliter(std::vector<inferredArmor> &qualifiedArmors)
         std::vector<Bar> tmpbars;
 
         cv::Mat close_kernel = getStructuringElement(cv::MORPH_RECT, cv::Size(3, 7));
-        morphologyEx(roi, morphology_img_, cv::MORPH_CLOSE, close_kernel);
+        morphologyEx(roi, roi, cv::MORPH_CLOSE, close_kernel);
 
         std::vector<std::vector<cv::Point>> contours;
-        findContours(morphology_img_, contours,cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+        findContours(roi, contours,cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
         for (auto &contour : contours)
         {
@@ -491,21 +490,6 @@ void deepProcess::armorFiliter(std::vector<inferredArmor> &qualifiedArmors, std:
     }
 }
 
-// 绘制灯条
-void deepProcess::show_bar(cv::Mat &img, std::vector<inferredArmor> &qualifiedArmors)
-{
-    for (auto &armor : qualifiedArmors)
-    {
-        for (auto &bar : armor.bars)
-        {
-            for (int i = 0; i < 4; i++)
-            {
-                line(img, bar.sorted_points[i], bar.sorted_points[(i + 1) % 4], cv::Scalar(0, 255, 0), 2);
-            }
-        }
-    }
-}
-
 // 绘制检测框
 void deepProcess::show_box(cv::Mat &img, std::vector<finalArmor> &finalArmors)
 {
@@ -559,7 +543,7 @@ void deepProcess::show_track(cv::Mat &img, sensor_msgs::CameraInfoConstPtr &came
             // center
             for (auto point : image_points)
             {
-                circle(img, point, 10, cv::Scalar(0, 0, 255), -1);
+                circle(img, point, 10, cv::Scalar(0, 0, 255), 10);
             }
         }
     }
@@ -573,7 +557,7 @@ void deepProcess::show_track(cv::Mat &img, sensor_msgs::CameraInfoConstPtr &came
 
     for (auto point : image_points)
     {
-        circle(img, point, 10, cv::Scalar(0, 255, 0), -1);
+        circle(img, point, 10, cv::Scalar(0, 255, 0), 10);
     }
 }
 

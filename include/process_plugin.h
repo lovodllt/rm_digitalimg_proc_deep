@@ -1,5 +1,6 @@
 #pragma once
 
+#include <number_classifier.h>
 #include <ros/ros.h>
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
@@ -20,33 +21,30 @@
 
 namespace rm_digitalimg_proc_deep {
 
-class Processor : public nodelet::Nodelet, public deepProcess
-{
+class Processor : public nodelet::Nodelet, public deepProcess, public number_classifier{
 public:
     Processor() = default;
     ~Processor() override
     {
         if (this->my_thread_.joinable())
-
             this->my_thread_.join();
     }
 
     void onInit() override;
     void initialize(ros::NodeHandle &nh);
+    void draw(cv::Mat &img);
+
     // callback
     void detectionCB(const rm_msgs::TargetDetectionArray::ConstPtr &msg);
     void trackCB(const rm_msgs::TrackData &track_data);
     void computeCB(const rm_msgs::TrackData &track_data);
     void inferenceconfigCB(InferenceConfig &config, uint32_t level);
-    void draw();
     void callback(const sensor_msgs::ImageConstPtr& img, const sensor_msgs::CameraInfoConstPtr& info);
 
 private:
     ros::NodeHandle nh_;
     std::shared_ptr<image_transport::ImageTransport> it_;
     std::thread my_thread_;
-
-    int target_is_red_{};
 
     // detection, compute, track
     rm_msgs::TargetDetection detection_;
@@ -63,12 +61,6 @@ private:
     // dynamic reconfigure
     std::unique_ptr<dynamic_reconfigure::Server<InferenceConfig>> inference_cfg_srv_;
     dynamic_reconfigure::Server<InferenceConfig>::CallbackType inference_cfg_cb_;
-
-    // dynamic parameter
-    float confidence_threshold_;
-    float nms_threshold_;
-    TargetColor target_color_;
-    DrawType draw_type_;
 
     // pub
     image_transport::Publisher img_pub_;
@@ -89,5 +81,3 @@ private:
 };
 
 }
-
-// 这里把is_red和is_large给ban掉了，后续出错再改0

@@ -1,3 +1,6 @@
-score_threshold: 0.7
+confidence_threshold: 0.3
 nms_threshold: 0.3
-target_color: 1
+target_color: 0
+draw_type: 0
+gamma: 0.7
+l_mean_threshold: 10

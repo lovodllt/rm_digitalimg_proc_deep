@@ -55,9 +55,6 @@ struct finalArmor {
     cv::Mat num_roi;
 };
 
-static std::vector<inferredArmor> qualifiedArmors;
-static std::vector<finalArmor> finalArmors;
-
 class deepProcess {
 public:
     deepProcess()
@@ -69,7 +66,7 @@ public:
     void init();
 
     dataImg preprocess_img(cv::Mat &raw_img);
-    std::vector<finalArmor> InferAndPostprocess(dataImg &img_data, float score_threshold_, float nms_threshold_, TargetColor);
+    std::vector<finalArmor> InferAndPostprocess(dataImg &img_data);
     void colorFiliter(cv::Mat &img, inferredArmor &armor, std::vector<inferredArmor> &qualifiedArmors, TargetColor target_color);
     bool isValidBar(Bar &bar);
     bool isValidArmor(inferredArmor &armor);
@@ -93,14 +90,21 @@ protected:
     int target_is_red_{};
     bool is_large_armor_ = false;
 
-    // draw
-    cv::Mat raw_img_;
-    cv::Mat binary_img_;
-    cv::Mat morphology_img_;
+    // inference
+    std::vector<inferredArmor> qualifiedArmors;
+    std::vector<finalArmor> finalArmors;
 
-    // infernec
-    //std::vector<inferredArmor> qualifiedArmors;
-    //std::vector<finalArmor> finalArmors;
+    // dynamic parameter
+    // inference
+    double confidence_threshold_{};
+    double nms_threshold_{};
+
+    // preprocess
+    double gamma_{};
+    double l_mean_threshold_{};
+
+    TargetColor target_color_{};
+    DrawType draw_type_{};
 };
 
 // HSV
